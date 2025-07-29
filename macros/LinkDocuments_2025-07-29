@@ -1,0 +1,72 @@
+'========================================================================================
+'  МОДУЛЬ  LinkDocuments                                                    2025-07-29
+'----------------------------------------------------------------------------------------
+'  ЧТО ДЕЛАЕТ
+'    1) Собирает список всех T-папок, упомянутых в таблице (колонка TRANS_NR).
+'    2) Строит/дополняет CSV-индекс, сканируя ТОЛЬКО эти папки.
+'    3) Проходит 16 000 строк, ставит гиперссылки, выделяет несоответствия,
+'       пишет LOG (по запросу).
+'
+'  Главные фичи
+'    • Сканирование сети x10 быстрее (только 200-3000 нужных T).
+'    • Инкрементальное обновление: доскан только новых папок.
+'    • Корректная обработка хвостов  _NNN_NN[_E], _REV1A, _02B, _A ...
+'========================================================================================
+Option Explicit
+
+'==========================  ПОЛЬЗОВАТЕЛЬСКИЕ НАСТРОЙКИ  ================================
+Private Const ROOT_PATH      As String = "\\Files-eco-001\02_дрп\04_СЗ_DRI\Исходные_данные\"
+Private Const INDEX_FILE     As String = "file_index.csv"      'создаётся рядом с книгой
+Private Const LOG_SHEET_NAME As String = "LOG"
+
+'Приоритеты расширений (0 — лучший)
+Private PriorityExt          As Variant
+
+'==========================  ТОЧКА ВХОДА  ===============================================
+Public Sub LinkDocuments_Main()
+    Dim ws As Worksheet: Set ws = ActiveSheet
+    Dim wbPath As String: wbPath = ThisWorkbook.Path & Application.PathSeparator
+
+    PriorityExt = Array("PDF", "XLSX", "XLS", "DOCX", "DOC", "DWG")
+
+    ' — 1.  Найти номера нужных колонок --------------------------------------------------
+    Dim colDoc As Long, colRev As Long, colTrans As Long
+    colDoc = GetColumnByHeader(ws.Rows(1), "DOCUMENT_NR")
+    colRev = GetColumnByHeader(ws.Rows(1), "REVISION")
+    colTrans = GetColumnByHeader(ws.Rows(1), "TRANS_NR")
+    If colDoc * colRev * colTrans = 0 Then
+        MsgBox "Не найдены все заголовки!", vbCritical: Exit Sub
+    End If
+
+    ' — 2.  Собрать список T-папок из таблицы -------------------------------------------
+    Dim needT As Object: Set needT = CollectNeededTFolders(ws, colTrans)
+    If needT.Count = 0 Then MsgBox "В таблице нет TRANS_NR!", vbExclamation: Exit Sub
+
+    ' — 3.  Диалоги пользователя ---------------------------------------------------------
+    Dim doReindex As VbMsgBoxResult
+    doReindex = MsgBox("Обновить индекс файлов (будут просканированы " & _
+                       needT.Count & " T-папок)?", vbYesNoCancel + vbQuestion)
+    If doReindex = vbCancel Then Exit Sub
+
+    Dim wantLog As Boolean
+    If MsgBox("Создать/обновить лист LOG?", vbYesNo + vbQuestion) = vbYes Then
+        PrepareLogSheet: wantLog = True
+    End If
+
+    ' — 4.  Построить или дополнить CSV-индекс ------------------------------------------
+    Dim dictIndex As Object: Set dictIndex = CreateObject("Scripting.Dictionary")
+    Dim haveT As Object:     Set haveT = CreateObject("Scripting.Dictionary")
+
+    If doReindex = vbYes Or Dir(wbPath & INDEX_FILE) = "" Then
+        BuildIndexCSV_Selected needT, dictIndex, wbPath & INDEX_FILE
+    Else
+        LoadIndexCSV wbPath & INDEX_FILE, dictIndex, haveT
+        Dim missT As Object: Set missT = MissingTFolders(haveT, needT)
+        If missT.Count > 0 Then _
+            BuildIndexCSV_Selected missT, dictIndex, wbPath & INDEX_FILE, True
+    End If
+
+    ' — 5.  Обработать реестр ------------------------------------------------------------
+    ProcessRegister ws, dictIndex, wantLog, colDoc, colRev, colTrans
+    MsgBox "Макрос завершён.", vbInformation
+End Sub
