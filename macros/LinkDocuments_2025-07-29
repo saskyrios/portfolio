@@ -4,25 +4,13 @@
 '  ЧТО ДЕЛАЕТ
 '    1) Собирает список всех T-папок, упомянутых в таблице (колонка TRANS_NR).
 '    2) Строит/дополняет CSV-индекс, сканируя ТОЛЬКО эти папки.
-'    3) Проходит 16 000 строк, ставит гиперссылки, выделяет несоответствия,
+'    3) Проходит 16 000 строк, ставит гиперссылки, выделяет несоответствия,
 '       пишет LOG (по запросу).
 '
 '  Главные фичи
 '    • Сканирование сети x10 быстрее (только 200-3000 нужных T).
 '    • Инкрементальное обновление: доскан только новых папок.
 '    • Корректная обработка хвостов  _NNN_NN[_E], _REV1A, _02B, _A ...
-'
-
-' WHAT IT DOES (English):
-' 1) Collects a list of all T-folders mentioned in the table (column TRANS_NR).
-' 2) Builds or updates a CSV index, scanning only these folders.
-' 3) Processes 16 000 rows, adds hyperlinks, highlights mismatches and writes a LOG (on request).
-'
-' Main features:
-' • Network scanning is up to 10x faster (only 200-3000 relevant T folders).
-' • Incremental updates: scans only new folders.
-' • Correct handling of suffix codes like _NNN_NN[E], _REVA1, 02B, A ...
-'
 '========================================================================================
 Option Explicit
 
@@ -31,17 +19,17 @@ Private Const ROOT_PATH      As String = "\\Files-eco-001\02_дрп\04_СЗ_DRI\
 Private Const INDEX_FILE     As String = "file_index.csv"      'создаётся рядом с книгой
 Private Const LOG_SHEET_NAME As String = "LOG"
 
-'Приоритеты расширений (0 — лучший)
+'Приоритеты расширений (0 — лучший)
 Private PriorityExt          As Variant
 
 '==========================  ТОЧКА ВХОДА  ===============================================
 Public Sub LinkDocuments_Main()
     Dim ws As Worksheet: Set ws = ActiveSheet
     Dim wbPath As String: wbPath = ThisWorkbook.Path & Application.PathSeparator
-
+    
     PriorityExt = Array("PDF", "XLSX", "XLS", "DOCX", "DOC", "DWG")
-
-    ' — 1.  Найти номера нужных колонок --------------------------------------------------
+    
+    '— 1.  Найти номера нужных колонок --------------------------------------------------
     Dim colDoc As Long, colRev As Long, colTrans As Long
     colDoc = GetColumnByHeader(ws.Rows(1), "DOCUMENT_NR")
     colRev = GetColumnByHeader(ws.Rows(1), "REVISION")
@@ -49,26 +37,26 @@ Public Sub LinkDocuments_Main()
     If colDoc * colRev * colTrans = 0 Then
         MsgBox "Не найдены все заголовки!", vbCritical: Exit Sub
     End If
-
-    ' — 2.  Собрать список T-папок из таблицы -------------------------------------------
+    
+    '— 2.  Собрать список T-папок из таблицы -------------------------------------------
     Dim needT As Object: Set needT = CollectNeededTFolders(ws, colTrans)
     If needT.Count = 0 Then MsgBox "В таблице нет TRANS_NR!", vbExclamation: Exit Sub
-
-    ' — 3.  Диалоги пользователя ---------------------------------------------------------
+    
+    '— 3.  Диалоги пользователя ---------------------------------------------------------
     Dim doReindex As VbMsgBoxResult
     doReindex = MsgBox("Обновить индекс файлов (будут просканированы " & _
                        needT.Count & " T-папок)?", vbYesNoCancel + vbQuestion)
     If doReindex = vbCancel Then Exit Sub
-
+    
     Dim wantLog As Boolean
     If MsgBox("Создать/обновить лист LOG?", vbYesNo + vbQuestion) = vbYes Then
-        PrepareLogSheet: wantLog = True
+PrepareLogSheet:         wantLog = True
     End If
-
-    ' — 4.  Построить или дополнить CSV-индекс ------------------------------------------
+    
+    '— 4.  Построить или дополнить CSV-индекс ------------------------------------------
     Dim dictIndex As Object: Set dictIndex = CreateObject("Scripting.Dictionary")
     Dim haveT As Object:     Set haveT = CreateObject("Scripting.Dictionary")
-
+    
     If doReindex = vbYes Or Dir(wbPath & INDEX_FILE) = "" Then
         BuildIndexCSV_Selected needT, dictIndex, wbPath & INDEX_FILE
     Else
@@ -77,8 +65,348 @@ Public Sub LinkDocuments_Main()
         If missT.Count > 0 Then _
             BuildIndexCSV_Selected missT, dictIndex, wbPath & INDEX_FILE, True
     End If
-
-    ' — 5.  Обработать реестр ------------------------------------------------------------
+    
+    '— 5.  Обработать реестр ------------------------------------------------------------
     ProcessRegister ws, dictIndex, wantLog, colDoc, colRev, colTrans
     MsgBox "Макрос завершён.", vbInformation
 End Sub
+
+'========================================================================================
+'  ШАГ 0  --------------------------------------------------------------------------------
+'        собираем T-папки из таблицы
+'----------------------------------------------------------------------------------------
+Private Function CollectNeededTFolders(ws As Worksheet, colTrans As Long) As Object
+    Dim setT As Object: Set setT = CreateObject("Scripting.Dictionary")
+    Dim lastR As Long:  lastR = ws.Cells(ws.Rows.Count, colTrans).End(xlUp).Row
+    
+    Dim r As Long, tNum As String
+    For r = 2 To lastR
+        tNum = ExtractTransFolderNum(ws.Cells(r, colTrans).Value)
+        If tNum <> "" Then setT(tNum) = 1
+    Next r
+    Set CollectNeededTFolders = setT
+End Function
+
+'========================================================================================
+'  ШАГ 1  --------------------------------------------------------------------------------
+'        строим/дополняем CSV-индекс по выборке T-папок
+'----------------------------------------------------------------------------------------
+Private Sub BuildIndexCSV_Selected(Tfolders As Object, _
+                                   dictOut As Object, csvPath As String, _
+                                   Optional append As Boolean = False)
+    Dim fso As Object: Set fso = CreateObject("Scripting.FileSystemObject")
+    Dim ts As Object
+    
+    If append And fso.FileExists(csvPath) Then
+        Set ts = fso.OpenTextFile(csvPath, 8, False, -1)      'Append UTF-8
+    Else
+        Set ts = fso.CreateTextFile(csvPath, True, True)      'Overwrite UTF-8
+        ts.WriteLine "FullPath;BaseName;RevNum;RevSuff;Ext;TransFolder"
+    End If
+    
+    Dim tKey As Variant, folderPath As String
+    Dim t0 As Single: t0 = Timer
+    Application.StatusBar = "Сканируем " & Tfolders.Count & " T-папок…"
+    
+    For Each tKey In Tfolders.Keys
+        folderPath = ROOT_PATH & tKey
+        If Dir(folderPath, vbDirectory) <> "" Then _
+            RecursiveScan CreateObject("Scripting.FileSystemObject").GetFolder(folderPath), _
+                          ts, dictOut
+    Next
+    ts.Close
+    Application.StatusBar = "Индекс: готов (" & Format(Timer - t0, "0.0") & " сек)"
+End Sub
+
+'—  найти «недостающие» T-папки ---------------------------------------------------------
+Private Function MissingTFolders(haveT As Object, needT As Object) As Object
+    Dim miss As Object: Set miss = CreateObject("Scripting.Dictionary")
+    Dim k As Variant
+    For Each k In needT.Keys
+        If Not haveT.Exists(k) Then miss(k) = 1
+    Next k
+    Set MissingTFolders = miss
+End Function
+
+'========================================================================================
+'  ШАГ 2  --------------------------------------------------------------------------------
+'        загрузка CSV-индекса
+'----------------------------------------------------------------------------------------
+Private Sub LoadIndexCSV(csvPath As String, dictOut As Object, haveT As Object)
+    Dim fso As Object: Set fso = CreateObject("Scripting.FileSystemObject")
+    Dim ts As Object:  Set ts = fso.OpenTextFile(csvPath, 1, False, -1)
+    
+    Dim line As String, p() As String
+    If Not ts.AtEndOfStream Then ts.ReadLine          'skip header
+    Do While Not ts.AtEndOfStream
+        line = ts.ReadLine
+        p = Split(line, ";")
+        If UBound(p) < 5 Then GoTo NextLine
+        
+        Dim docKey As String: docKey = GetDocumentKey(p(1))
+        Dim col As Collection
+        If Not dictOut.Exists(docKey) Then
+            Set col = New Collection
+            dictOut.Add docKey, col
+        Else
+            Set col = dictOut(docKey)
+        End If
+        col.Add p(0) & "|" & p(2) & "|" & p(3) & "|" & p(4) & "|" & p(5)
+        haveT(p(5)) = 1
+NextLine:
+    Loop
+    ts.Close
+End Sub
+
+'—  рекурсивный обход одной T-директории ----------------------------------------------
+Private Sub RecursiveScan(fld As Object, ts As Object, dictOut As Object)
+    Dim fso As Object: Set fso = CreateObject("Scripting.FileSystemObject")
+    Dim fil As Object, sf As Object
+    
+    For Each fil In fld.Files
+        Dim baseName As String: baseName = fso.GetBaseName(fil.Name)
+        Dim ext As String:      ext = UCase(fso.GetExtensionName(fil.Name))
+        
+        Dim revStr As String: revStr = ExtractRevision(baseName)
+        Dim num As Long, suff As String: ParseRevision revStr, num, suff
+        
+        Dim docKey As String: docKey = GetDocumentKey(baseName)
+        
+        ts.WriteLine fil.Path & ";" & baseName & ";" & num & ";" & suff & ";" & _
+                     ext & ";" & fld.Name
+        
+        Dim col As Collection
+        If Not dictOut.Exists(docKey) Then
+            Set col = New Collection: dictOut.Add docKey, col
+        Else
+            Set col = dictOut(docKey)
+        End If
+        col.Add fil.Path & "|" & num & "|" & suff & "|" & ext & "|" & fld.Name
+    Next fil
+    
+    For Each sf In fld.SubFolders
+        RecursiveScan sf, ts, dictOut
+    Next sf
+End Sub
+
+'========================================================================================
+'  ШАГ 3  --------------------------------------------------------------------------------
+'        проходим реестр, ставим ссылки
+'----------------------------------------------------------------------------------------
+Private Sub ProcessRegister(ws As Worksheet, dictIdx As Object, wantLog As Boolean, _
+                            colDoc As Long, colRev As Long, colTrans As Long)
+    Dim wsLog As Worksheet: If wantLog Then Set wsLog = Worksheets(LOG_SHEET_NAME)
+    Dim dictExt As Object:  Set dictExt = BuildExtPriority()
+    
+    With Application
+        .ScreenUpdating = False: .EnableEvents = False: .Calculation = xlCalculationManual
+    End With
+    
+    Dim lastR As Long: lastR = ws.Cells(ws.Rows.Count, colDoc).End(xlUp).Row
+    Dim r As Long, proc As Long
+    
+    For r = 2 To lastR
+        proc = proc + 1
+        If proc Mod 500 = 0 Then
+            Application.StatusBar = "Обработано " & proc & "/" & (lastR - 1)
+            DoEvents
+        End If
+        
+        Dim cDoc As Range:   Set cDoc = ws.Cells(r, colDoc)
+        Dim cRev As Range:   Set cRev = ws.Cells(r, colRev)
+        Dim cTrans As Range: Set cTrans = ws.Cells(r, colTrans)
+        
+        Dim docNR As String: docNR = Trim(CStr(cDoc.Value))
+        Dim revTab As String: revTab = UCase(Trim(CStr(cRev.Value)))
+        Dim transTab As String: transTab = UCase(Trim(CStr(cTrans.Value)))
+        
+        ClearYellow cDoc, cRev, cTrans
+        If docNR = "" Then GoTo ContinueRow
+        
+        If Not dictIdx.Exists(UCase(docNR)) Then
+            PaintYellow cDoc, cRev, cTrans
+            LogIssue wsLog, docNR, "FileMissing", "Ключ не найден в индексе"
+            GoTo ContinueRow
+        End If
+        
+        '––––  выбор лучшего файла
+        Dim bestPath As String, bestNum As Long, bestSuff As String
+        Dim bestExt As String, bestTrans As String
+        ChooseBestFile dictIdx(UCase(docNR)), transTab, dictExt, _
+                       bestPath, bestNum, bestSuff, bestExt, bestTrans, wsLog, docNR, cTrans
+        
+        If bestPath = "" Then Go To ContinueRow     'уже залогировано
+        
+        '–––  проверка REVISION
+        Dim numTab As Long, suffTab As String
+        ParseRevision revTab, numTab, suffTab
+        If numTab <> bestNum Or StrComp(suffTab, bestSuff, vbTextCompare) <> 0 Then
+            PaintYellow cRev
+            LogIssue wsLog, docNR, "RevMismatch", _
+                     "В таблице='" & revTab & "' факт='" & UnparseRevision(bestNum, bestSuff) & "'"
+        End If
+        
+        '–––  гиперссылка
+        On Error Resume Next: cDoc.Hyperlinks.Delete: On Error GoTo 0
+        On Error Resume Next
+        ws.Hyperlinks.Add Anchor:=cDoc, Address:=bestPath, TextToDisplay:=docNR
+        If Err.Number <> 0 Then
+            PaintYellow cDoc
+            LogIssue wsLog, docNR, "PathTooLong", ">" & Len(bestPath) & " симв."
+            Err.Clear
+        End If
+ContinueRow:
+    Next r
+    
+    With Application
+        .ScreenUpdating = True: .EnableEvents = True: .Calculation = xlCalculationAutomatic
+    End With
+End Sub
+
+'—  алгоритм выбора «лучшего» файла -----------------------------------------------------
+Private Sub ChooseBestFile(col As Collection, transTab As String, dictExt As Object, _
+                            bestPath As String, bestNum As Long, bestSuff As String, _
+                            bestExt As String, bestTrans As String, _
+                            wsLog As Worksheet, docNR As String, cTrans As Range)
+    '1) max ревизия
+    Dim itm As Variant, sp() As String
+    bestNum = -1: bestSuff = ""
+    For Each itm In col
+        sp = Split(itm, "|")
+        Dim n As Long: n = CLng(sp(1))
+        If n > bestNum Then
+            bestNum = n: bestSuff = sp(2)
+        ElseIf n = bestNum Then
+            If StrComp(sp(2), bestSuff, vbTextCompare) > 0 Then bestSuff = sp(2)
+        End If
+    Next
+    
+    '2) кандидаты этой ревизии
+    Dim cand As New Collection
+    For Each itm In col
+        sp = Split(itm, "|")
+        If CLng(sp(1)) = bestNum And sp(2) = bestSuff Then cand.Add itm
+    Next
+    
+    '3) ищем в своём T
+    bestPath = "": bestExt = "ZZZ": bestTrans = ""
+    Dim trnTabNum As String: trnTabNum = ExtractTransFolderNum(transTab)
+    For Each itm In cand
+        sp = Split(itm, "|")
+        If ExtractTransFolderNum(sp(4)) = trnTabNum Then
+            bestPath = sp(0): bestExt = sp(3): bestTrans = sp(4): Exit For
+        End If
+    Next
+    
+    '4) если нет — берём лучший по расширению + жёлтый TRANS_NR
+    If bestPath = "" Then
+        Dim score As Long: score = 999
+        For Each itm In cand
+            sp = Split(itm, "|")
+            Dim s As Long: If dictExt.Exists(sp(3)) Then s = dictExt(sp(3)) Else s = 998
+            If s < score Then
+                score = s: bestPath = sp(0): bestExt = sp(3): bestTrans = sp(4)
+            End If
+        Next
+        PaintYellow cTrans
+        LogIssue wsLog, docNR, "TransMismatch", _
+                 "Таблица='" & trnTabNum & "' факт='" & ExtractTransFolderNum(bestTrans) & "'"
+    End If
+End Sub
+
+'========================================================================================
+'  СЛУЖЕБНЫЕ ПРОЦЕДУРЫ / ФУНКЦИИ
+'----------------------------------------------------------------------------------------
+Private Function BuildExtPriority() As Object
+    Dim d As Object: Set d = CreateObject("Scripting.Dictionary")
+    Dim i As Long: For i = 0 To UBound(PriorityExt): d.Add PriorityExt(i), i: Next
+    Set BuildExtPriority = d
+End Function
+
+Private Function GetColumnByHeader(headerRow As Range, headerName As String) As Long
+    Dim c As Range
+    For Each c In headerRow.Cells
+        If Trim(UCase(CStr(c.Value))) = Trim(UCase(headerName)) Then _
+            GetColumnByHeader = c.Column: Exit Function
+    Next c
+End Function
+
+Private Sub ClearYellow(ParamArray cells())
+    Dim i As Long: For i = LBound(cells) To UBound(cells): cells(i).Interior.ColorIndex = 0: Next i
+End Sub
+Private Sub PaintYellow(ParamArray cells())
+    Dim i As Long: For i = LBound(cells) To UBound(cells): cells(i).Interior.Color = vbYellow: Next i
+End Sub
+
+Private Sub PrepareLogSheet()
+    On Error Resume Next: Worksheets(LOG_SHEET_NAME).Delete: On Error GoTo 0
+    Dim ws As Worksheet: Set ws = Worksheets.Add: ws.Name = LOG_SHEET_NAME
+    ws.Range("A1:D1").Value = Array("Timestamp", "DOCUMENT_NR", "Issue", "Details")
+End Sub
+Private Sub LogIssue(wsLog As Worksheet, docNR As String, issue As String, details As String)
+    If wsLog Is Nothing Then Exit Sub
+    Dim r As Long: r = wsLog.Cells(wsLog.Rows.Count, 1).End(xlUp).Row + 1
+    wsLog.Cells(r, 1).Resize(1, 4).Value = Array(Now, docNR, issue, details)
+End Sub
+
+'—  RegExp-утилиты ---------------------------------------------------------------------
+Private Function ExtractTransFolderNum(src As String) As String
+    Dim pat As Object: Set pat = CreateObject("VBScript.RegExp")
+    pat.Pattern = "T\d{5}": If pat.Test(src) Then ExtractTransFolderNum = UCase(pat.Execute(src)(0))
+End Function
+
+'Новая версия —- ловит  _NNN_NN[_E] , _NN[_E] , _REV , _A
+Private Function ExtractRevision(baseName As String) As String
+    Dim pat As Object: Set pat = CreateObject("VBScript.RegExp"): pat.Global = False
+    pat.IgnoreCase = True
+    
+    pat.Pattern = "(?:[_\s-]\d{3})[_\s-](\d{2,3})(?:[_\s-]?([A-Z]+))?$"
+    If pat.Test(baseName) Then
+        With pat.Execute(baseName)(0): ExtractRevision = UCase(.SubMatches(0) & .SubMatches(1)): End With: Exit Function
+    End If
+    
+    pat.Pattern = "(?:[_\s-])(\d{2,3})(?:[_\s-]?([A-Z]+))?$"
+    If pat.Test(baseName) Then
+        With pat.Execute(baseName)(0): ExtractRevision = UCase(.SubMatches(0) & .SubMatches(1)): End With: Exit Function
+    End If
+    
+    pat.Pattern = "(?:[_\s-])REV(\d*)([A-Z]*)$"
+    If pat.Test(baseName) Then
+        With pat.Execute(baseName)(0): ExtractRevision = UCase(.SubMatches(0) & .SubMatches(1)): End With: Exit Function
+    End If
+    
+    pat.Pattern = "(?:[_\s-])([A-Z]+)$"
+    If pat.Test(baseName) Then ExtractRevision = UCase(pat.Execute(baseName)(0).SubMatches(0))
+End Function
+
+Private Function GetDocumentKey(baseName As String) As String
+    Dim pat As Object: Set pat = CreateObject("VBScript.RegExp")
+    pat.IgnoreCase = True: pat.Global = False
+    pat.Pattern = "^(.*?)([_\s-]\d{3}[_\s-]\d{2,3}(?:[_\s-][A-Z]+)?|" & _
+                  "[_\s-]\d{2,3}(?:[_\s-][A-Z]+)?|" & _
+                  "[_\s-]REV\d*[A-Z]*|" & _
+                  "[_\s-][A-Z]+)?$"
+    If pat.Test(baseName) Then
+        GetDocumentKey = UCase(pat.Execute(baseName)(0).SubMatches(0))
+    Else
+        GetDocumentKey = UCase(baseName)
+    End If
+End Function
+
+'—  ревизия > число+суффикс без Overflow ----------------------------------------------
+Private Sub ParseRevision(revStr As String, numOut As Long, suffOut As String)
+    Dim pat As Object: Set pat = CreateObject("VBScript.RegExp")
+    pat.Pattern = "^(\d*)([A-Z]*)$"
+    If pat.Test(revStr) Then
+        With pat.Execute(revStr)(0)
+            If .SubMatches(0) = "" Then numOut = 0 _
+            Else numOut = CLng(Application.Min(Val(.SubMatches(0)), 2147483646#))
+            suffOut = .SubMatches(1)
+        End With
+    End If
+End Sub
+Private Function UnparseRevision(numPart As Long, suffPart As String) As String
+    Dim s As String: If numPart > 0 Then s = Format(numPart, "00")
+    UnparseRevision = s & suffPart
+End Function
+'========================================================================================
