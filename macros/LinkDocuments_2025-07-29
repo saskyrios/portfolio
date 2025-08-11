@@ -11,6 +11,18 @@
 '    • Сканирование сети x10 быстрее (только 200-3000 нужных T).
 '    • Инкрементальное обновление: доскан только новых папок.
 '    • Корректная обработка хвостов  _NNN_NN[_E], _REV1A, _02B, _A ...
+'
+
+' WHAT IT DOES (English):
+' 1) Collects a list of all T-folders mentioned in the table (column TRANS_NR).
+' 2) Builds or updates a CSV index, scanning only these folders.
+' 3) Processes 16 000 rows, adds hyperlinks, highlights mismatches and writes a LOG (on request).
+'
+' Main features:
+' • Network scanning is up to 10x faster (only 200-3000 relevant T folders).
+' • Incremental updates: scans only new folders.
+' • Correct handling of suffix codes like _NNN_NN[E], _REVA1, 02B, A ...
+'
 '========================================================================================
 Option Explicit
 
