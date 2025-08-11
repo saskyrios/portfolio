@@ -31,6 +31,19 @@ Hello! My name is Artemiy Gorin. I am a software engineering student and work in
 - `python/` — utilities and scripts in Python. For example: working with files and reports, parsing data and other automation tasks.
 - `unity/` — projects using the Unity engine: platformer games, experiments and demonstrations.
 
+
+## Проект Misspell
+
+Я работаю над проектом **Misspell**. Подробнее о проекте:
+- [VK](https://vk.com/boneskeeperstudio)
+- [Telegram](https://t.me/boneskeeperstudio)
+
+### Misspell project
+
+I am working on a project called **Misspell**. You can find more information here:
+- [VK](https://vk.com/boneskeeperstudio)
+- [Telegram](https://t.me/boneskeeperstudio)
+
 Each folder has its own README file with instructions on how to run the projects.
 
 ### How to get started
