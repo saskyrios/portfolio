@@ -16,8 +16,16 @@
 
 Каждый проект имеет собственный README‑файл с шагами для установки и запуска. По мере добавления файлов структура будет расширяться.
 
+## Проект Misspell
+
+Я работаю над проектом **Misspell**. Подробнее о проекте:
+- [VK](https://vk.com/boneskeeperstudio)
+- [Telegram](https://t.me/boneskeeperstudio)
+
 ## Контакты
 
+Если у вас есть вопросы или предложения, свяжитесь со мной по e ‑ mail: gotin2013@yandex.ru
+Мой номер телефона:+79875509775
 
 ## English version
 
@@ -31,12 +39,6 @@ Hello! My name is Artemiy Gorin. I am a software engineering student and work in
 - `python/` — utilities and scripts in Python. For example: working with files and reports, parsing data and other automation tasks.
 - `unity/` — projects using the Unity engine: platformer games, experiments and demonstrations.
 
-
-## Проект Misspell
-
-Я работаю над проектом **Misspell**. Подробнее о проекте:
-- [VK](https://vk.com/boneskeeperstudio)
-- [Telegram](https://t.me/boneskeeperstudio)
 
 ### Misspell project
 
@@ -52,10 +54,8 @@ Each project comes with its own README file that contains installation and usage
 
 ### Contacts
 
-If you have any questions or suggestions, feel free to contact me via e‑mail: your‑email@example.com.
-
-
-Если у вас есть вопросы или предложения, свяжитесь со мной по e ‑ mail: your-email@example.com.
+If you have any questions or suggestions, feel free to contact me via e‑mail: gotin2013@yandex.ru
+My phone number:+79875509775
 
 ## License
 
