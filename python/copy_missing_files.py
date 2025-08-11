@@ -58,7 +58,7 @@ Notes for further improvement:
   future requirements demand verifying file content (e.g. via checksums),
   the logic in ``is_duplicate`` can be extended accordingly.
 
-Author: ChatGPT (OpenAI)
+Author: Горин А.А.
 Date: 2025-07-29
 """
 
